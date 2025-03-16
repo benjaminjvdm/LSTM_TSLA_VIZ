@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import yfinance as yf
 import pandas as pd
+import mplfinance as mpf
 from keras.models import Sequential
 from keras.layers import Dense, LSTM, Dropout
 from keras.optimizers import RMSprop
@@ -51,7 +52,7 @@ def visualize_stock_price_history():
     avg_gain = gain.rolling(window=14).mean()
     avg_loss = loss.rolling(window=14).mean().abs()
     rsi = 100 - (100 / (1 + (avg_gain / avg_loss)))
-
+    
     # Stochastic Oscillator
     high_14, low_14 = tsla_data_filtered['High'].rolling(window=14).max(), tsla_data_filtered['Low'].rolling(window=14).min()
     k_percent = 100 * ((tsla_data_filtered['Close'] - low_14) / (high_14 - low_14))
@@ -76,7 +77,7 @@ def visualize_stock_price_history():
         axes[2].plot(tsla_data_filtered.index, d_percent, label='%D')
         axes[2].set_title('Stochastic Oscillator')
         axes[2].legend()
-
+    
     st.pyplot()
 
 # Build and train the LSTM model
@@ -110,7 +111,7 @@ def build_and_train_model():
     # Reshape the data
     x_train = np.array(x_train)
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-
+    
     # Build LSTM model
     model = Sequential()
     model.add(LSTM(units=50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
@@ -122,11 +123,11 @@ def build_and_train_model():
     model.add(Dense(units=1))
 
     # Compile the model
-    opt = RMSprop(learning_rate=0.001)
+    opt = RMSprop(lr=0.001)
     model.compile(optimizer=opt, loss='mean_squared_error')
 
     # Train the model
-    epochs = 64
+    epochs = 15
     batch_size = 64
     model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size)
 
@@ -262,10 +263,10 @@ def main():
     st.title("Tesla (TSLA) Stock Price Analysis")
     st.sidebar.title("Options")
 
-    options = ["Stock Indicator Analysis", "All Models", "Stock Price Prediction - LSTM", "Stock Price Prediction - SVM", "Stock Price Prediction - LightGBM"]
+    options = ["Stock Price History", "All Models", "Stock Price Prediction - LSTM", "Stock Price Prediction - SVM", "Stock Price Prediction - LightGBM"]
     choice = st.sidebar.selectbox("Select analysis type:", options)
 
-    if choice == "Stock Indicator Analysis":
+    if choice == "Stock Price History":
         visualize_stock_price_history()
     elif choice == "All Models":
         build_and_train_model()
