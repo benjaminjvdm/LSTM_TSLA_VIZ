@@ -1,288 +1,212 @@
 import streamlit as st
-import numpy as np
-import matplotlib.pyplot as plt
 import yfinance as yf
 import pandas as pd
-import mplfinance as mpf
-from keras.models import Sequential
-from keras.layers import Dense, LSTM, Dropout
-from keras.optimizers import RMSprop
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+import numpy as np
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
+from sklearn.metrics import mean_squared_error
 from sklearn.svm import SVR
 from lightgbm import LGBMRegressor
-from sklearn.metrics import mean_squared_error
 
-# Disable warnings
-st.set_option('deprecation.showPyplotGlobalUse', False)
+st.title("Financial Data Analysis and Machine Learning")
 
-# Load TSLA data from yfinance and preprocess data
-tsla_data = yf.download("TSLA", start="2015-01-01")
+# Sidebar for options
+st.sidebar.title("Options")
 
-# Global date range filter
-start_date = st.sidebar.date_input("Start date", value=tsla_data.index.min())
-end_date = st.sidebar.date_input("End date", value=tsla_data.index.max())
+# Tabs
+tabs = ["Indicators", "Machine Learning"]
+selected_tab = st.sidebar.selectbox("Select tab:", tabs)
 
-# Add presets for the date selector
-preset_options = ["6M", "1Y", "5Y", "Max"]
-selected_preset = st.sidebar.selectbox("Or Select a Preset Date Range:", preset_options)
+if selected_tab == "Indicators":
+    st.header("Technical Indicators")
 
-if selected_preset == "6M":
-    start_date = end_date - pd.DateOffset(months=6)
-elif selected_preset == "1Y":
-    start_date = end_date - pd.DateOffset(years=1)
-elif selected_preset == "5Y":
-    start_date = end_date - pd.DateOffset(years=5)
-elif selected_preset == "Max":
-    start_date = tsla_data.index.min()
+    # Stock selection
+    ticker = st.sidebar.text_input("Enter stock ticker:", "TSLA")
 
-# Preprocess data
-data = tsla_data.filter(['Close'])
-dataset = data.values
-scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(dataset)
+    # Date range selection
+    start_date = st.sidebar.date_input("Start date", value=pd.to_datetime("2020-01-01"))
+    end_date = st.sidebar.date_input("End date", value=pd.to_datetime("today"))
 
-def visualize_stock_price_history():
-    # Filter data based on selected dates
-    tsla_data_filtered = tsla_data.loc[start_date:end_date]
+    # Fetch data from yfinance
+    try:
+        data = yf.download(ticker, start=start_date, end=end_date)
+        if data.empty:
+            st.error(f"No data found for ticker {ticker}")
+        else:
+            # Calculate indicators
+            data['MA50'] = data['Close'].rolling(window=50).mean()
 
-    # Relative Strength Index (RSI)
-    delta = tsla_data_filtered['Close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean().abs()
-    rsi = 100 - (100 / (1 + (avg_gain / avg_loss)))
-    
-    # Stochastic Oscillator
-    high_14, low_14 = tsla_data_filtered['High'].rolling(window=14).max(), tsla_data_filtered['Low'].rolling(window=14).min()
-    k_percent = 100 * ((tsla_data_filtered['Close'] - low_14) / (high_14 - low_14))
-    d_percent = k_percent.rolling(window=3).mean()
+            delta = data['Close'].diff()
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
+            avg_gain = gain.rolling(window=14).mean()
+            avg_loss = loss.rolling(window=14).mean().abs()
+            rsi = 100 - (100 / (1 + (avg_gain / avg_loss)))
 
-    # Add checkboxes for the indicators
-    show_rsi = st.sidebar.checkbox('Show RSI', value=True)
-    show_stochastic_oscillator = st.sidebar.checkbox('Show Stochastic Oscillator', value=True)
+            high_14, low_14 = data['High'].rolling(window=14).max(), data['Low'].rolling(window=14).min()
+            k_percent = 100 * ((data['Close'] - low_14) / (high_14 - low_14))
+            d_percent = k_percent.rolling(window=3).mean()
 
-    # Plot stock price history, RSI, and Stochastic Oscillator
-    _, axes = plt.subplots(nrows=3, ncols=1, figsize=(16,12), sharex=True)
-    axes[0].plot(tsla_data_filtered.index, tsla_data_filtered['Close'])
-    axes[0].set_title('Tesla (TSLA) Stock Price History')
-    axes[0].set_ylabel('Closing price ($)')
+            # Plotting
+            fig, axes = plt.subplots(nrows=4, ncols=1, figsize=(12, 8), sharex=True)
 
-    if show_rsi:
-        axes[1].plot(tsla_data_filtered.index, rsi)
-        axes[1].set_title('Relative Strength Index (RSI)')
+            axes[0].plot(data['Close'], label='Close Price')
+            axes[0].plot(data['MA50'], label='50-day MA')
+            axes[0].legend()
+            axes[0].set_ylabel('Price')
 
-    if show_stochastic_oscillator:
-        axes[2].plot(tsla_data_filtered.index, k_percent, label='%K')
-        axes[2].plot(tsla_data_filtered.index, d_percent, label='%D')
-        axes[2].set_title('Stochastic Oscillator')
-        axes[2].legend()
-    
-    st.pyplot()
+            axes[1].plot(rsi, label='RSI')
+            axes[1].legend()
+            axes[1].set_ylabel('RSI')
+            axes[1].set_ylim(0, 100)
 
-# Build and train the LSTM model
-def build_and_train_model():
-    # Filter data based on selected dates
-    tsla_data_filtered = tsla_data.loc[start_date:end_date]
+            axes[2].plot(k_percent, label='%K')
+            axes[2].plot(d_percent, label='%D')
+            axes[2].legend()
+            axes[2].set_ylabel('Stochastic Oscillator')
+            axes[2].set_ylim(0, 100)
 
-    # Preprocess data
-    data = tsla_data_filtered.filter(['Close'])
-    dataset = data.values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
+            axes[3].plot(data['Volume'], label='Volume')
+            axes[3].legend()
+            axes[3].set_ylabel('Volume')
 
-    # Create training dataset
-    training_data_len = int(len(dataset) * 0.8)
-    train_data = scaled_data[0:training_data_len, :]
+            st.pyplot(fig)
 
-    x_train = []
-    y_train = []
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
 
-    # Ensure train_data has at least 60 elements
-    if len(train_data) < 60:
-        train_data = np.pad(train_data, ((60 - len(train_data), 0), (0, 0)), 'constant', constant_values=(0,))
+elif selected_tab == "Machine Learning":
+    st.header("Machine Learning Models")
 
-    for i in range(60, len(train_data)):
-        x_train.append(train_data[i-60:i, 0])
-        y_train.append(train_data[i, 0])
+    # Stock selection
+    ticker = st.sidebar.text_input("Enter stock ticker for ML:", "TSLA")
 
-    x_train, y_train = np.array(x_train), np.array(y_train)
+    # Date range selection
+    start_date = st.sidebar.date_input("Start date for ML", value=pd.to_datetime("2020-01-01"))
+    end_date = st.sidebar.date_input("End date for ML", value=pd.to_datetime("today"))
 
-    # Reshape the data
-    x_train = np.array(x_train)
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-    
-    # Build LSTM model
-    model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
-    model.add(Dropout(0.2))
+    try:
+        data = yf.download(ticker, start=start_date, end=end_date)
+        if data.empty:
+            st.error(f"No data found for ticker {ticker}")
+        else:
+            # Data preprocessing
+            data = data['Close'].values.reshape(-1, 1)
+            scaler = MinMaxScaler()
+            data = scaler.fit_transform(data)
 
-    model.add(LSTM(units=50, return_sequences=False))
-    model.add(Dropout(0.2))
+            # Split data into training and testing sets
+            train_size = int(len(data) * 0.8)
+            train_data, test_data = data[:train_size], data[train_size:]
 
-    model.add(Dense(units=1))
+            # Prepare data for LSTM
+            def create_dataset(dataset, time_step=1):
+                X, y = [], []
+                for i in range(len(dataset) - time_step - 1):
+                    a = dataset[i:(i + time_step), 0]
+                    X.append(a)
+                    y.append(dataset[i + time_step, 0])
+                return np.array(X), np.array(y)
 
-    # Compile the model
-    opt = RMSprop(lr=0.001)
-    model.compile(optimizer=opt, loss='mean_squared_error')
+            # LSTM Model
+            st.subheader("LSTM Model")
+            time_step = 60
+            X_train_lstm, y_train_lstm = create_dataset(train_data, time_step)
+            X_test_lstm, y_test_lstm = create_dataset(test_data, time_step)
+            X_train_lstm = X_train_lstm.reshape(X_train_lstm.shape[0], X_train_lstm.shape[1], 1)
+            X_test_lstm = X_test_lstm.reshape(X_test_lstm.shape[0], X_test_lstm.shape[1], 1)
 
-    # Train the model
-    epochs = 15
-    batch_size = 64
-    model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size)
+            lstm_model = Sequential()
+            lstm_model.add(LSTM(50, return_sequences=True, input_shape=(time_step, 1)))
+            lstm_model.add(LSTM(50, return_sequences=False))
+            lstm_model.add(Dense(1))
+            lstm_model.compile(optimizer='adam', loss='mean_squared_error')
 
-    # Test dataset
-    test_data = scaled_data[training_data_len - 60:, :]
-    x_test = []
-    y_test = dataset[training_data_len:, :]
-    for i in range(60, len(test_data)):
-        x_test.append(test_data[i-60:i, 0])
+            lstm_model.fit(X_train_lstm, y_train_lstm, epochs=10, batch_size=32, verbose=0)
 
-    x_test = np.array(x_test)
-    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
+            lstm_predictions = lstm_model.predict(X_test_lstm)
+            lstm_predictions = scaler.inverse_transform(lstm_predictions)
+            y_test_lstm = scaler.inverse_transform(y_test_lstm.reshape(-1, 1))
 
-    # Make predictions
-    predictions = model.predict(x_test)
-    predictions = scaler.inverse_transform(predictions)
+            lstm_rmse = np.sqrt(mean_squared_error(y_test_lstm, lstm_predictions))
 
-    # Predict the next price
-    next_price = model.predict(x_test[-1].reshape(1, -1, 1))
-    next_price = scaler.inverse_transform(next_price)
-    st.write('Next predicted price (LSTM): $', round(next_price[0][0], 2))
+            # Predict next day's price for LSTM
+            last_data_lstm = X_test_lstm[-1].reshape(1, time_step, 1)
+            next_day_lstm_prediction = lstm_model.predict(last_data_lstm)
+            next_day_lstm_prediction = scaler.inverse_transform(next_day_lstm_prediction)
 
-    # Evaluate the model
-    rmse = np.sqrt(np.mean(predictions - y_test)**2)
-    st.write('Root Mean Squared Error:', rmse)
+            # Plot LSTM predictions
+            fig_lstm, ax_lstm = plt.subplots(figsize=(12, 6))
+            ax_lstm.plot(y_test_lstm, label="Actual")
+            ax_lstm.plot(lstm_predictions, label="LSTM Predicted")
+            ax_lstm.legend()
+            ax_lstm.set_title("LSTM Model")
+            st.pyplot(fig_lstm)
 
-    # Plot predictions vs actual data
-    train = data[:training_data_len]
-    valid = data[training_data_len:]
-    valid.loc[:, 'Predictions'] = predictions
+            st.write(f'LSTM Root Mean Squared Error:', lstm_rmse)
+            st.write(f'LSTM Next Day Prediction: {next_day_lstm_prediction[0][0]}')
 
-    _, ax = plt.subplots(figsize=(16,8))
-    ax.plot(train['Close'])
-    ax.plot(valid[['Close', 'Predictions']])
-    ax.legend(['Train', 'Validation', 'Prediction'], loc='upper left')
-    ax.set_title('Tesla (TSLA) Stock Price Prediction - LTSM')
-    ax.set_ylabel('Closing price ($)')
-    st.pyplot()
+            # SVM Model
+            st.subheader("SVM Model")
+            X_train_svm, y_train_svm = train_data[:-1], train_data[1:]
+            X_test_svm, y_test_svm = test_data[:-1], test_data[1:]
 
-# Build and train the SVM model
-def build_and_train_svm():
-    # Filter data based on selected dates
-    tsla_data_filtered = tsla_data.loc[start_date:end_date]
+            svm_model = SVR(kernel='linear')
+            svm_model.fit(X_train_svm, y_train_svm.ravel())
 
-    # Preprocess data
-    data = tsla_data_filtered.filter(['Close'])
-    dataset = data.values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
+            svm_predictions = svm_model.predict(X_test_svm)
+            svm_predictions = scaler.inverse_transform(svm_predictions.reshape(-1, 1))
+            y_test_svm = scaler.inverse_transform(y_test_svm.reshape(-1, 1))
 
-    # Create training and testing datasets
-    training_data_len = int(len(dataset) * 0.8)
-    x_train = scaled_data[:training_data_len]
-    y_train = dataset[:training_data_len]
-    x_test = scaled_data[training_data_len:]
-    y_test = dataset[training_data_len:]
+            svm_rmse = np.sqrt(mean_squared_error(y_test_svm, svm_predictions))
 
-    # Build SVM model
-    model = SVR(kernel='linear')
-    model.fit(x_train, y_train)
+            # Predict next day's price for SVM
+            last_data_svm = test_data[-1].reshape(1, -1)
+            next_day_svm_prediction = svm_model.predict(last_data_svm)
+            next_day_svm_prediction = scaler.inverse_transform(next_day_svm_prediction.reshape(1, -1))
 
-    # Make predictions
-    predictions = model.predict(x_test)
+            # Plot SVM predictions
+            fig_svm, ax_svm = plt.subplots(figsize=(12, 6))
+            ax_svm.plot(y_test_svm, label="Actual")
+            ax_svm.plot(svm_predictions, label="SVM Predicted")
+            ax_svm.legend()
+            ax_svm.set_title("SVM Model")
+            st.pyplot(fig_svm)
 
-    # Predict the next price
-    next_price = model.predict(x_test[-1].reshape(1, -1))
-    st.write('Next predicted price (SVM): $', next_price[0])
+            st.write(f'SVM Root Mean Squared Error:', svm_rmse)
+            st.write(f'SVM Next Day Prediction: {next_day_svm_prediction[0][0]}')
 
-    # Evaluate the model
-    rmse = np.sqrt(mean_squared_error(y_test, predictions))
-    st.write('Root Mean Squared Error:', rmse)
+            # LightGBM Model
+            st.subheader("LightGBM Model")
+            X_train_lgbm, y_train_lgbm = train_data[:-1], train_data[1:]
+            X_test_lgbm, y_test_lgbm = test_data[:-1], test_data[1:]
 
-    # Plot predictions vs actual data
-    train = data[:training_data_len]
-    valid = data[training_data_len:]
-    valid.loc[:, 'Predictions'] = predictions
+            lgbm_model = LGBMRegressor()
+            lgbm_model.fit(X_train_lgbm, y_train_lgbm.ravel())
 
-    _, ax = plt.subplots(figsize=(16,8))
-    ax.plot(train['Close'])
-    ax.plot(valid[['Close', 'Predictions']])
-    ax.legend(['Train', 'Validation', 'Prediction'], loc='upper left')
-    ax.set_title('Tesla (TSLA) Stock Price Prediction - SVM')
-    ax.set_ylabel('Closing price ($)')
-    st.pyplot()
+            lgbm_predictions = lgbm_model.predict(X_test_lgbm)
+            lgbm_predictions = scaler.inverse_transform(lgbm_predictions.reshape(-1, 1))
+            y_test_lgbm = scaler.inverse_transform(y_test_lgbm.reshape(-1, 1))
 
-# Build and train the LightGBM model
-def build_and_train_lgbm():
-    # Filter data based on selected dates
-    tsla_data_filtered = tsla_data.loc[start_date:end_date]
+            lgbm_rmse = np.sqrt(mean_squared_error(y_test_lgbm, lgbm_predictions))
 
-    # Preprocess data
-    data = tsla_data_filtered.filter(['Close'])
-    dataset = data.values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
+            # Predict next day's price for LightGBM
+            last_data_lgbm = test_data[-1].reshape(1, -1)
+            next_day_lgbm_prediction = lgbm_model.predict(last_data_lgbm)
+            next_day_lgbm_prediction = scaler.inverse_transform(next_day_lgbm_prediction.reshape(1, -1))
 
-    # Create training and testing datasets
-    training_data_len = int(len(dataset) * 0.8)
-    x_train = scaled_data[:training_data_len]
-    y_train = dataset[:training_data_len]
-    x_test = scaled_data[training_data_len:]
-    y_test = dataset[training_data_len:]
+            # Plot LightGBM predictions
+            fig_lgbm, ax_lgbm = plt.subplots(figsize=(12, 6))
+            ax_lgbm.plot(y_test_lgbm, label="Actual")
+            ax_lgbm.plot(lgbm_predictions, label="LightGBM Predicted")
+            ax_lgbm.legend()
+            ax_lgbm.set_title("LightGBM Model")
+            st.pyplot(fig_lgbm)
 
-    # Build LightGBM model
-    model = LGBMRegressor()
-    model.fit(x_train, y_train)
+            st.write(f'LightGBM Root Mean Squared Error:', lgbm_rmse)
+            st.write(f'LightGBM Next Day Prediction: {next_day_lgbm_prediction[0][0]}')
 
-    # Make predictions
-    predictions = model.predict(x_test)
-
-    # Predict the next price
-    next_price = model.predict(x_test[-1].reshape(1, -1))
-    st.write('Next predicted price (LightGBM): $', next_price[0])
-
-    # Evaluate the model
-    rmse = np.sqrt(mean_squared_error(y_test, predictions))
-    st.write('Root Mean Squared Error:', rmse)
-
-    # Plot predictions vs actual data
-    train = data[:training_data_len]
-    valid = data[training_data_len:]
-    valid.loc[:, 'Predictions'] = predictions
-
-    _, ax = plt.subplots(figsize=(16,8))
-    ax.plot(train['Close'])
-    ax.plot(valid[['Close', 'Predictions']])
-    ax.legend(['Train', 'Validation', 'Prediction'], loc='upper left')
-    ax.set_title('Tesla (TSLA) Stock Price Prediction - LightGBM')
-    ax.set_ylabel('Closing price ($)')
-    st.pyplot()
-
-def main():
-    st.title("Tesla (TSLA) Stock Price Analysis")
-    st.sidebar.title("Options")
-
-    options = ["Stock Price History", "All Models", "Stock Price Prediction - LSTM", "Stock Price Prediction - SVM", "Stock Price Prediction - LightGBM"]
-    choice = st.sidebar.selectbox("Select analysis type:", options)
-
-    if choice == "Stock Price History":
-        visualize_stock_price_history()
-    elif choice == "All Models":
-        build_and_train_model()
-        build_and_train_svm()
-        build_and_train_lgbm()
-    elif choice == "Stock Price Prediction - LSTM":
-        build_and_train_model()
-    elif choice == "Stock Price Prediction - SVM":
-        build_and_train_svm()
-    elif choice == "Stock Price Prediction - LightGBM":
-        build_and_train_lgbm()
-
-
-    # Add a footer
-    st.sidebar.markdown("---")
-    st.sidebar.text("Built with ❤️ by Benjee(문벤지)")
-
-if __name__ == '__main__':
-    main()
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
