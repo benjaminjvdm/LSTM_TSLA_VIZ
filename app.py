@@ -10,7 +10,8 @@ from sklearn.metrics import mean_squared_error
 from sklearn.svm import SVR
 from lightgbm import LGBMRegressor
 
-st.title("Financial Data Analysis and Machine Learning")
+st.set_page_config(page_title="Ticker Stock Viz", page_icon="📈")
+st.title("Ticker Stock Viz")
 
 # Sidebar for options
 st.sidebar.title("Options")
